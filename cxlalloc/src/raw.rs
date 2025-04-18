@@ -605,10 +605,7 @@ impl Buffer {
         let buffer = Self::map(csr, None, c"/proc/mcas_target_buff", PAGE_SIZE * 16)?;
 
         unsafe {
-            assert_eq!(
-                libc::memset(buffer.address_virt.cast(), 0, PAGE_SIZE * 16),
-                core::ptr::null_mut(),
-            );
+            libc::memset(buffer.address_virt.cast(), 0, PAGE_SIZE * 16);
         }
 
         Ok(buffer)
