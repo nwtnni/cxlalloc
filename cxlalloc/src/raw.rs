@@ -602,7 +602,16 @@ impl Buffer {
     }
 
     pub fn target(csr: &mut Csr) -> io::Result<Self> {
-        Self::map(csr, None, c"/proc/mcas_target_buff", PAGE_SIZE * 16)
+        let buffer = Self::map(csr, None, c"/proc/mcas_target_buff", PAGE_SIZE * 16)?;
+
+        unsafe {
+            assert_eq!(
+                libc::memset(buffer.address_virt.cast(), 0, PAGE_SIZE * 16),
+                core::ptr::null_mut(),
+            );
+        }
+
+        Ok(buffer)
     }
 
     fn translate(&self, address: *mut u64) -> u64 {
