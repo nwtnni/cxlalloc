@@ -487,12 +487,14 @@ pub fn mcas(address: *mut u64, old: u64, new: u64) -> Result<u64, u64> {
         wr.write_volatile(old);
         wr.add(1).write_volatile(new);
         wr.add(2).write_volatile(phys);
-        wr.add(3).write_volatile(id);
+        wr.add(3).write_volatile(id * 2);
+
         core::arch::x86_64::_mm_clflush(wr.cast());
         core::arch::x86_64::_mm_clflush(rd.cast());
         core::arch::x86_64::_mm_mfence();
-        let out = rd.read_volatile();
-        let success = rd.add(1).read_volatile();
+
+        let out = rd.byte_add(id as usize * 64).read_volatile();
+        let success = rd.byte_add(id as usize * 64).add(1).read_volatile();
         log::warn!("{id} mcas result: {out} {success}");
 
         match success {
