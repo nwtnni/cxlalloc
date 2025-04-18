@@ -2,6 +2,8 @@ use core::fmt::Debug;
 use core::marker::PhantomData;
 use core::ops::Deref;
 use core::ops::DerefMut;
+// use core::ops::Shl as _;
+// use core::ops::Sub as _;
 use core::sync::atomic::AtomicU64;
 use core::sync::atomic::Ordering;
 
@@ -39,15 +41,31 @@ impl<T: ribbit::Pack<Loose = L>, L: Convert64> Atomic<T> {
     }
 
     pub fn compare_exchange(&self, old: T, new: T) -> Result<T, T> {
-        self.value
-            .compare_exchange(
-                Self::pack(old),
-                Self::pack(new),
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            )
+        // const TSC_FREQUENCY: u64 = 2_803_200_000;
+        // const LATENCY_NS: u64 = 100;
+        // const LATENCY_CYCLE: u64 = (LATENCY_NS << 32) / TSC_FREQUENCY;
+        //
+        // let mut core = 0;
+        // let start = unsafe { core::arch::x86_64::__rdtscp(&mut core) };
+        // while unsafe { core::arch::x86_64::__rdtscp(&mut core) }
+        //     .sub(start)
+        //     .shl(32u32)
+        //     .ge(&LATENCY_CYCLE)
+        // {}
+
+        crate::raw::mcas(self.value.as_ptr(), Self::pack(old), Self::pack(new))
             .map(|value| unsafe { Self::unpack(value) })
             .map_err(|value| unsafe { Self::unpack(value) })
+
+        // self.value
+        //     .compare_exchange(
+        //         Self::pack(old),
+        //         Self::pack(new),
+        //         Ordering::AcqRel,
+        //         Ordering::Acquire,
+        //     )
+        //     .map(|value| unsafe { Self::unpack(value) })
+        //     .map_err(|value| unsafe { Self::unpack(value) })
     }
 
     pub fn fetch_xor(&self, value: u64) -> u64 {

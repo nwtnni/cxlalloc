@@ -16,7 +16,7 @@ use core::ffi::CStr;
 use core::num::NonZeroUsize;
 use core::ptr;
 use core::ptr::NonNull;
-use core::sync::atomic::AtomicPtr;
+use core::sync::atomic::AtomicU64;
 use core::sync::atomic::Ordering;
 use std::io;
 use std::os::fd::AsRawFd as _;
@@ -115,6 +115,9 @@ macro_rules! layout {
 
 pub(crate) static MCAS: OnceLock<Mcas> = OnceLock::new();
 pub(crate) static TARGET: OnceLock<Buffer> = OnceLock::new();
+thread_local! {
+    pub(crate) static THREAD_ID: AtomicU64 = const { AtomicU64::new(0) };
+}
 
 #[bon]
 impl Raw {
@@ -156,9 +159,7 @@ impl Raw {
 
         let id = region::Id::new(id);
 
-        let (shared_size, _) = Self::shared();
-
-        dbg!(shared_size);
+        let (_shared_size, _) = Self::shared();
         let mut csr = Csr::new().unwrap();
 
         MCAS.get_or_init(|| Mcas::new(&mut csr).unwrap());
@@ -270,6 +271,7 @@ impl Raw {
 
 impl Raw {
     pub fn allocator<S, O>(&self, id: thread::Id) -> Allocator<S, O> {
+        THREAD_ID.with(|thread_id| thread_id.store(u16::from(id) as u64, Ordering::Relaxed));
         unsafe { Allocator::new(self.unfocused().focus(id)) }
     }
 
@@ -461,7 +463,19 @@ impl Drop for Raw {
     }
 }
 
-pub fn mcas(address: *mut u64, old: u64, new: u64) {
+pub fn mcas(address: *mut u64, old: u64, new: u64) -> Result<u64, u64> {
+    let mcas = MCAS.get().unwrap();
+    let target = TARGET.get().unwrap();
+    let phys = target.translate(address);
+
+    log::warn!(
+        "{} mcas: v{:x?} p{:x?} o{} n{}",
+        THREAD_ID.with(|id| id.load(Ordering::Relaxed)),
+        address,
+        phys,
+        old,
+        new
+    );
     todo!()
 }
 
