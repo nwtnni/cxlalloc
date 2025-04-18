@@ -467,16 +467,40 @@ pub fn mcas(address: *mut u64, old: u64, new: u64) -> Result<u64, u64> {
     let mcas = MCAS.get().unwrap();
     let target = TARGET.get().unwrap();
     let phys = target.translate(address);
+    let id = THREAD_ID.with(|id| id.load(Ordering::Relaxed));
 
     log::warn!(
         "{} mcas: v{:x?} p{:x?} o{} n{}",
-        THREAD_ID.with(|id| id.load(Ordering::Relaxed)),
+        id,
         address,
         phys,
         old,
         new
     );
-    todo!()
+
+    let wr = mcas.write.address_virt.cast::<u64>();
+    let rd = mcas.read.address_virt.cast::<u64>();
+
+    unsafe {
+        core::arch::x86_64::_mm_clflush(rd.cast());
+        core::arch::x86_64::_mm_mfence();
+
+        wr.write_volatile(old);
+        wr.add(1).write_volatile(new);
+        wr.add(2).write_volatile(phys);
+        wr.add(3).write_volatile(id);
+        core::arch::x86_64::_mm_clflush(wr.cast());
+        core::arch::x86_64::_mm_mfence();
+
+        let out = rd.read_volatile();
+        let success = rd.add(1).read_volatile();
+        log::warn!("{id} mcas result: {out} {success}");
+
+        match success {
+            0 => Err(out),
+            _ => Ok(out),
+        }
+    }
 }
 
 const CXL_PCIE_BAR_PATH: &CStr = c"/sys/devices/pci0000:27/0000:27:00.1/resource2";
