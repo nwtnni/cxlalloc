@@ -493,13 +493,24 @@ pub fn mcas(address: *mut u64, old: u64, new: u64) -> Result<u64, u64> {
         core::arch::x86_64::_mm_clflush(rd.cast());
         core::arch::x86_64::_mm_mfence();
 
-        let out = rd.byte_add(id as usize * 64).read_volatile();
-        let success = rd.byte_add(id as usize * 64).add(1).read_volatile();
-        log::warn!("{id} mcas result: {out} {success}");
+        let rd = rd.byte_add(id as usize * 64);
+        let mut out = [0u64; 2];
+
+        core::arch::asm! {
+            "movdqu xmm0, [{input}]",
+            "movdqu [{output}], xmm0",
+            input = in(reg) rd,
+            output = in(reg) out.as_ptr(),
+        }
+
+        let result = out[0];
+        let success = out[1];
+
+        log::warn!("{id} mcas result: {result} {success}");
 
         match success {
-            0 => Err(out),
-            _ => Ok(out),
+            0 => Err(result),
+            _ => Ok(result),
         }
     }
 }
