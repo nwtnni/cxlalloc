@@ -470,8 +470,10 @@ pub fn mcas(address: *mut u64, old: u64, new: u64) -> Result<u64, u64> {
     let id = THREAD_ID.with(|id| id.load(Ordering::Relaxed));
 
     log::warn!(
-        "{} mcas: v{:x?} p{:x?} o{} n{}",
+        "{} {:?} {:?} mcas: v{:x?} p{:x?} o{} n{}",
         id,
+        mcas,
+        target,
         address,
         phys,
         old,
