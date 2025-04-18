@@ -484,12 +484,20 @@ pub fn mcas(address: *mut u64, old: u64, new: u64) -> Result<u64, u64> {
     let rd = mcas.read.address_virt.cast::<u64>();
 
     unsafe {
-        wr.write_volatile(old);
-        wr.add(1).write_volatile(new);
-        wr.add(2).write_volatile(phys);
-        wr.add(3).write_volatile(id * 2);
+        let mut buffer: Aligned = Aligned([old, new, phys, id * 2, 0, 0, 0, 0]);
 
-        core::arch::x86_64::_mm_clflush(wr.cast());
+        core::arch::asm! {
+            "movdir64b 0x0({dest}), {src}",
+            dest = in(reg) wr,
+            src  = in(reg) &mut buffer as *mut _,
+        }
+
+        // wr.write_volatile(old);
+        // wr.add(1).write_volatile(new);
+        // wr.add(2).write_volatile(phys);
+        // wr.add(3).write_volatile(id * 2);
+
+        // core::arch::x86_64::_mm_clflush(wr.cast());
         core::arch::x86_64::_mm_clflush(rd.cast());
         core::arch::x86_64::_mm_mfence();
 
@@ -514,6 +522,9 @@ pub fn mcas(address: *mut u64, old: u64, new: u64) -> Result<u64, u64> {
         }
     }
 }
+
+#[repr(C, align(64))]
+struct Aligned([u64; 8]);
 
 const CXL_PCIE_BAR_PATH: &CStr = c"/sys/devices/pci0000:27/0000:27:00.1/resource2";
 const PAGE_SIZE: usize = 1 << 12;
