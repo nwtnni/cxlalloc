@@ -487,7 +487,7 @@ pub fn mcas(address: *mut u64, old: u64, new: u64) -> Result<u64, u64> {
         let mut buffer: Aligned = Aligned([old, new, phys, id * 2, 0, 0, 0, 0]);
 
         core::arch::asm! {
-            "movdir64b 0x0({dest}), {src}",
+            "movdir64b [{dest}], {src}",
             dest = in(reg) wr,
             src  = in(reg) &mut buffer as *mut _,
         }
