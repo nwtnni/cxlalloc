@@ -39,6 +39,10 @@ impl<T: ribbit::Pack<Loose = L>, L: Convert64> Atomic<T> {
     }
 
     pub fn compare_exchange(&self, old: T, new: T) -> Result<T, T> {
+        unsafe {
+            core::arch::x86_64::_mm_clflush(self.value.as_ptr() as *const _);
+        }
+
         self.value
             .compare_exchange(
                 Self::pack(old),
