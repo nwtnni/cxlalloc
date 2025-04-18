@@ -9,6 +9,7 @@ use crate::Atomic;
 
 pub(crate) struct Detectable<T>(Atomic<State<T>>);
 
+#[repr(align(64))]
 #[ribbit::pack(size = 64, debug)]
 pub(crate) struct State<T> {
     #[ribbit(size = 16)]
