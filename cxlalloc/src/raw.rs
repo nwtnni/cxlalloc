@@ -12,9 +12,17 @@ pub use RawBuilder as Builder;
 use core::alloc::Layout;
 use core::cell::UnsafeCell;
 use core::ffi;
+use core::ffi::CStr;
 use core::num::NonZeroUsize;
+use core::ptr;
 use core::ptr::NonNull;
+use core::sync::atomic::AtomicPtr;
 use core::sync::atomic::Ordering;
+use std::io;
+use std::os::fd::AsRawFd as _;
+use std::os::fd::FromRawFd as _;
+use std::os::fd::OwnedFd;
+use std::sync::OnceLock;
 
 use bon::bon;
 
@@ -105,6 +113,9 @@ macro_rules! layout {
     };
 }
 
+pub(crate) static MCAS: OnceLock<Mcas> = OnceLock::new();
+pub(crate) static TARGET: OnceLock<Buffer> = OnceLock::new();
+
 #[bon]
 impl Raw {
     #[builder]
@@ -146,8 +157,21 @@ impl Raw {
         let id = region::Id::new(id);
 
         let (shared_size, _) = Self::shared();
+
+        dbg!(shared_size);
+        let mut csr = Csr::new().unwrap();
+
+        MCAS.get_or_init(|| Mcas::new(&mut csr).unwrap());
+        let target = Buffer::target(&mut csr).unwrap();
+        TARGET.get_or_init(|| target);
+
         // FIXME: support extension for huge allocation region?
-        let shared = region::Fixed::new(&backend, id.with_suffix("shared"), shared_size)?;
+        let shared = region::Fixed {
+            id: region::Id::new("shared"),
+            address: NonNull::new(target.address_virt).unwrap().cast(),
+            clean: true,
+            size: NonZeroUsize::new(PAGE_SIZE * 16).unwrap(),
+        };
 
         let (owned_size, _) = Self::owned();
         let owned = region::Fixed::new(&backend, id.with_suffix("owned"), owned_size)?;
@@ -434,5 +458,148 @@ impl Drop for Raw {
         }
 
         todo!()
+    }
+}
+
+pub fn mcas(address: *mut u64, old: u64, new: u64) {
+    todo!()
+}
+
+const CXL_PCIE_BAR_PATH: &CStr = c"/sys/devices/pci0000:27/0000:27:00.1/resource2";
+const PAGE_SIZE: usize = 1 << 12;
+
+#[derive(Debug)]
+pub struct Csr {
+    address_virt: *mut u64,
+}
+
+impl Csr {
+    const RD_BUFF: usize = 13;
+    const WR_BUFF: usize = 14;
+
+    pub fn new() -> io::Result<Self> {
+        unsafe {
+            let fd = match libc::open(CXL_PCIE_BAR_PATH.as_ptr(), libc::O_RDWR | libc::O_SYNC) {
+                -1 => return Err(io::Error::last_os_error()),
+                fd => OwnedFd::from_raw_fd(fd),
+            };
+
+            let address_virt = match libc::mmap(
+                ptr::null_mut(),
+                1 << 21,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_SHARED,
+                fd.as_raw_fd(),
+                0,
+            ) {
+                libc::MAP_FAILED => return Err(io::Error::last_os_error()),
+                address => address.cast(),
+            };
+
+            Ok(Self { address_virt })
+        }
+    }
+
+    pub fn set(&mut self, index: usize, value: u64) {
+        unsafe { self.address_virt.add(index).write_volatile(value) }
+    }
+}
+
+#[derive(Debug)]
+pub struct Mcas {
+    read: Buffer,
+    write: Buffer,
+}
+
+unsafe impl Sync for Mcas {}
+unsafe impl Send for Mcas {}
+
+impl Mcas {
+    pub fn new(csr: &mut Csr) -> io::Result<Self> {
+        Ok(Self {
+            read: Buffer::read(csr)?,
+            write: Buffer::read(csr)?,
+        })
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct Buffer {
+    address_phys: *mut libc::c_void,
+    address_virt: *mut libc::c_void,
+}
+
+unsafe impl Sync for Buffer {}
+unsafe impl Send for Buffer {}
+
+impl Buffer {
+    pub fn read(csr: &mut Csr) -> io::Result<Self> {
+        Self::map(
+            csr,
+            Some(Csr::RD_BUFF),
+            c"/proc/mcas_rd_buff",
+            PAGE_SIZE * 16,
+        )
+    }
+
+    pub fn write(csr: &mut Csr) -> io::Result<Self> {
+        Self::map(
+            csr,
+            Some(Csr::WR_BUFF),
+            c"/proc/mcas_wr_buff",
+            PAGE_SIZE * 16,
+        )
+    }
+
+    pub fn target(csr: &mut Csr) -> io::Result<Self> {
+        Self::map(csr, None, c"/proc/mcas_target_buff", PAGE_SIZE * 16)
+    }
+
+    fn translate(&self, address: *mut u64) -> u64 {
+        (address as u64)
+            .checked_sub(self.address_virt as u64)
+            .unwrap()
+            + self.address_phys as u64
+    }
+
+    fn map(csr: &mut Csr, index: Option<usize>, name: &CStr, size: usize) -> io::Result<Self> {
+        unsafe {
+            let fd = match libc::open(name.as_ptr(), libc::O_RDWR) {
+                -1 => return Err(io::Error::last_os_error()),
+                fd => OwnedFd::from_raw_fd(fd),
+            };
+
+            let mut address_phys = [0u8; 8];
+            assert_eq!(
+                libc::read(
+                    fd.as_raw_fd(),
+                    &mut address_phys as *mut u8 as *mut ffi::c_void,
+                    8
+                ),
+                8
+            );
+            let address_phys = u64::from_ne_bytes(address_phys);
+
+            if let Some(index) = index {
+                csr.set(index, address_phys);
+            }
+
+            let address_virt = match libc::mmap(
+                ptr::null_mut(),
+                size,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_SHARED,
+                fd.as_raw_fd(),
+                0,
+            ) {
+                libc::MAP_FAILED => return Err(io::Error::last_os_error()),
+                address => address.cast(),
+            };
+
+            Ok(Self {
+                address_phys: address_phys as *mut _,
+                address_virt,
+            })
+        }
     }
 }

@@ -12,6 +12,8 @@ use arrayvec::ArrayString;
 use crate::raw::backend;
 use crate::raw::backend::Backend;
 
+use super::Csr;
+
 #[repr(C, align(4096))]
 pub(crate) struct Page([u8; 4096]);
 
@@ -99,10 +101,10 @@ pub(crate) trait Region {
 }
 
 pub(crate) struct Fixed {
-    id: Id,
-    clean: bool,
-    address: NonNull<Page>,
-    size: NonZeroUsize,
+    pub(super) id: Id,
+    pub(super) clean: bool,
+    pub(super) address: NonNull<Page>,
+    pub(super) size: NonZeroUsize,
 }
 
 pub(crate) struct Sequential {
