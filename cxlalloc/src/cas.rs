@@ -7,8 +7,8 @@ use crate::recover::HeapState;
 use crate::thread;
 use crate::Atomic;
 
-#[repr(align(64))]
-pub(crate) struct Detectable<T>(Atomic<State<T>>);
+#[repr(C)]
+pub(crate) struct Detectable<T>(Atomic<State<T>>, [u8; 63]);
 
 #[ribbit::pack(size = 64, debug)]
 pub(crate) struct State<T> {
