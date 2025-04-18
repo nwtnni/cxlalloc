@@ -556,7 +556,7 @@ impl Mcas {
     pub fn new(csr: &mut Csr) -> io::Result<Self> {
         Ok(Self {
             read: Buffer::read(csr)?,
-            write: Buffer::read(csr)?,
+            write: Buffer::write(csr)?,
         })
     }
 }
